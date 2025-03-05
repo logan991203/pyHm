@@ -41,6 +41,17 @@ def create_training_arguments() -> TrainingArguments:
     return training_args
 
 
+def collate_fn(batch):
+    data = {}
+    data["pixel_values"] = torch.stack([x["pixel_values"] for x in batch])
+    data["labels"] = [x["labels"] for x in batch]
+
+    if "pixel_mask" in batch[0]:
+        data["pixel_mask"] = torch.stack([x["pixel_mask"] for x in batch])
+
+    return data
+
+
 def build_trainer(model, image_processor, datasets) -> Trainer:
     """
     Build and return the trainer object for training and evaluation.
@@ -53,16 +64,6 @@ def build_trainer(model, image_processor, datasets) -> Trainer:
     Returns:
         Trainer object for training and evaluation.
     """
-    def collate_fn(batch):
-        data = {}
-        data["pixel_values"] = torch.stack([x["pixel_values"] for x in batch])
-        data["labels"] = [x["labels"] for x in batch]
-
-        if "pixel_mask" in batch[0]:
-            data["pixel_mask"] = torch.stack([x["pixel_mask"] for x in batch])
-
-        return data
-
     training_args: TrainingArguments = create_training_arguments()
 
     # Partial function to compute metrics

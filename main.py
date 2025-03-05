@@ -33,7 +33,7 @@ def main():
     # Build and train the model
     trainer = build_trainer(
         model=model,
-        processor=processor,
+        image_processor=processor,
         datasets=datasets,
     )
 
