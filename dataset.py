@@ -56,9 +56,12 @@ train_augmentation = albumentations.Compose(
     ],
     bbox_params=albumentations.BboxParams(format="coco", label_fields=["category"]))  # For training set
 
-validation_test_augmentation = albumentations.Compose([
-    albumentations.Resize(height=480, width=480),
-])  # For validation sets and test sets
+validation_test_augmentation = albumentations.Compose(
+    [
+        albumentations.Resize(height=480, width=480),
+    ],
+    bbox_params=albumentations.BboxParams(format="coco", label_fields=[
+        "category"]))  # For training set)  # For validation sets and test sets
 
 
 # # Formatting comments
