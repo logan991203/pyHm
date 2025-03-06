@@ -1,9 +1,6 @@
 from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict
 import albumentations
-from albumentations.pytorch import ToTensorV2
-import cv2
 import numpy as np
-import torch
 
 
 def build_dataset() -> DatasetDict | Dataset | IterableDatasetDict | IterableDataset:
@@ -35,6 +32,12 @@ def build_dataset() -> DatasetDict | Dataset | IterableDatasetDict | IterableDat
     # Write your code here.
     from datasets import load_dataset
     all_datasets = load_dataset("cppe-5")  # Load the dataset
+
+    # Delete the data with the boundary box problem
+    remove_idx = [590, 821, 822, 875, 876, 878, 879]
+    keep = [i for i in range(len(all_datasets["train"])) if i not in remove_idx]
+    all_datasets["train"] = all_datasets["train"].select(keep)
+
     # Divide the training set into an 80% training set and a 20% validation set.
     train_dataset = all_datasets["train"]
     train_val_split = train_dataset.train_test_split(test_size=0.2, seed=42)
@@ -44,78 +47,64 @@ def build_dataset() -> DatasetDict | Dataset | IterableDatasetDict | IterableDat
 
 
 # Data enhancement configuration
-train_augmentation = albumentations.Compose([
-    albumentations.HorizontalFlip(p=0.5),
-    albumentations.VerticalFlip(p=0.5),
-    albumentations.Rotate(limit=10, p=0.5),
-    albumentations.RandomBrightnessContrast(p=0.5),
-    albumentations.Resize(height=640, width=640),
-    albumentations.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ToTensorV2()
-])
+train_augmentation = albumentations.Compose(
+    [
+        albumentations.HorizontalFlip(p=1.0),
+        albumentations.VerticalFlip(p=0.5),
+        albumentations.RandomBrightnessContrast(p=1.0),
+        albumentations.Resize(height=480, width=480),
+    ],
+    bbox_params=albumentations.BboxParams(format="coco", label_fields=["category"]))  # For training set
 
 validation_test_augmentation = albumentations.Compose([
-    albumentations.Resize(height=640, width=640),
-    albumentations.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ToTensorV2()
+    albumentations.Resize(height=480, width=480),
 ])  # For validation sets and test sets
 
 
-# Define preprocessor functions
-def preprocess_train(example, processor):
-    if not example:
-        return None
-    image = example["image"]
-    bboxes = example.get("bbox", [])
-    category_labels = example.get("category_labels", [])
-
-    # Check if image is a batch of images
-    if len(image.shape) == 4:
-        image = image[0]  # Take the first image in the batch
-
-    # Convert the image to BGR format
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-
-    # Apply data enhancement
-    transformed = train_augmentation(image=image, bboxes=bboxes, category_ids=category_labels)
-    image = transformed["image"]
-    bboxes = transformed["bboxes"]
-    category_labels = transformed["category_ids"]
-
-    # Converts category labels to tensors
-    labels = [{"labels": torch.tensor(category_labels), "boxes": torch.tensor(bboxes)}]
-
-    # Use a processor for preprocessing
-    inputs = processor(images=image, return_tensors="pt")
-    return {**inputs, "labels": labels}
+# # Formatting comments
+def formatted_com(image_id, category, area, bbox):
+    annotations = []
+    for i in range(0, len(category)):
+        new_ann = {
+            "image_id": image_id,
+            "category_id": category[i],
+            "isCrowd": 0,
+            "area": area[i],
+            "bbox": list(bbox[i]),
+        }
+    annotations.append(new_ann)
+    return annotations
 
 
-def preprocess_val_test(example, processor):
-    if not example:
-        return None
-    image = example["image"]
-    bboxes = example.get("bbox", [])
-    category_labels = example.get("category_labels", [])
+# transforming a batch
+def train_transform_batch(examples, processor):
+    image_ids = examples["image_id"]
+    images, bboxes, area, categories = [], [], [], []
+    for image, objects in zip(examples["image"], examples["objects"]):
+        image = np.array(image.convert("RGB"))[:, :, ::-1]
+        out = train_augmentation(image=image, bboxes=objects["bbox"], category=objects["category"])
+        area.append(objects["area"])
+        images.append(out["image"])
+        bboxes.append(out["bboxes"])
+        categories.append(out["category"])
+    targets = [{"image_id": id_, "annotations": formatted_com(id_, cat_, ar_, box_)}
+               for id_, cat_, ar_, box_ in zip(image_ids, categories, area, bboxes)]
+    return processor(images=images, annotations=targets, return_tensors="pt")
 
-    # Check if image is a batch of images
-    if len(image.shape) == 4:
-        image = image[0]  # Take the first image in the batch
 
-    # Convert the image to BGR format
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-
-    # # Apply validation set enhancement
-    transformed = validation_test_augmentation(image=image, bboxes=bboxes, category_ids=category_labels)
-    image = transformed["image"]
-    bboxes = transformed["bboxes"]
-    category_labels = transformed["category_ids"]
-
-    # Converts category labels to tensors
-    labels = [{"labels": torch.tensor(category_labels), "boxes": torch.tensor(bboxes)}]
-
-    # Use a processor for preprocessing
-    inputs = processor(images=image, return_tensors="pt")
-    return {**inputs, "labels": labels}
+def val_test_transform_batch(examples, processor):
+    image_ids = examples["image_id"]
+    images, bboxes, area, categories = [], [], [], []
+    for image, objects in zip(examples["image"], examples["objects"]):
+        image = np.array(image.convert("RGB"))[:, :, ::-1]
+        out = validation_test_augmentation(image=image, bboxes=objects["bbox"], category=objects["category"])
+        area.append(objects["area"])
+        images.append(out["image"])
+        bboxes.append(out["bboxes"])
+        categories.append(out["category"])
+    targets = [{"image_id": id_, "annotations": formatted_com(id_, cat_, ar_, box_)}
+               for id_, cat_, ar_, box_ in zip(image_ids, categories, area, bboxes)]
+    return processor(images=images, annotations=targets, return_tensors="pt")
 
 
 def add_preprocessing(dataset, processor) -> DatasetDict | Dataset | IterableDatasetDict | IterableDataset:
@@ -156,12 +145,11 @@ def add_preprocessing(dataset, processor) -> DatasetDict | Dataset | IterableDat
     # Write your code here.
     from functools import partial
     # Create batch transform function
-    train_transform_batch = partial(preprocess_train, processor=processor)
-    validation_test_transform_batch = partial(preprocess_val_test, processor=processor)
-
+    train_set_transform_batch = partial(train_transform_batch, processor=processor)
+    val_test_set_transform_batch = partial(val_test_transform_batch, processor=processor)
     # Application transformation
-    dataset["train"] = dataset["train"].with_transform(train_transform_batch)
-    dataset["validation"] = dataset["validation"].with_transform(validation_test_transform_batch)
-    dataset["test"] = dataset["test"].with_transform(validation_test_transform_batch)
+    dataset["train"] = dataset["train"].with_transform(train_set_transform_batch)
+    dataset["validation"] = dataset["validation"].with_transform(val_test_set_transform_batch)
+    dataset["test"] = dataset["test"].with_transform(val_test_set_transform_batch)
 
     return dataset
